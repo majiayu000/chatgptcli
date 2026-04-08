@@ -1,0 +1,17 @@
+{
+  "name": "chatgptcli",
+  "version": "0.1.0",
+  "description": "Web-backed ChatGPT CLI via opencli Browser Bridge",
+  "type": "module",
+  "bin": {
+    "chatgptcli": "src/main.js"
+  },
+  "scripts": {
+    "start": "bun run src/main.js",
+    "setup": "bun run src/main.js setup",
+    "test": "bun test"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  }
+}
