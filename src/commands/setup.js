@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { EXIT_CODE } from '../core/errors.js';
-import { OPENCLI_ENV, resolveOpenCliPaths } from '../core/opencli.js';
+import { OPENCLI_ENV, resolveOpenCliPaths, shellSingleQuote } from '../core/opencli.js';
 
 let runProcess = (cmd, args, options) => spawnSync(cmd, args, options);
 let pathExists = (path) => existsSync(path);
@@ -52,7 +52,7 @@ export function runSetup() {
     lines.push('- Or place opencli at `.omx/reference/opencli` under this repo.');
   }
   if (rootExists && (!mainExists || !browserExists)) {
-    lines.push(`- Build opencli once: cd "${root}" && bun install`);
+    lines.push(`- Build opencli once: cd ${shellSingleQuote(root)} && bun install`);
   }
   if (!extensionExists) {
     lines.push(`- Ensure Browser Bridge extension exists at "${extensionPath}".`);

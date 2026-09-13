@@ -151,6 +151,9 @@ describe('cli', () => {
       expect(stderr.join('')).toContain('build artifacts missing');
       expect(stderr.join('')).toContain('bun install');
       expect(stderr.join('')).toContain('never auto-install');
+      // Remediation hint must single-quote root (not double-quote) to block shell injection.
+      expect(stderr.join('')).toContain(`cd '${root}' && bun install`);
+      expect(stderr.join('')).not.toContain(`cd "${root}"`);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

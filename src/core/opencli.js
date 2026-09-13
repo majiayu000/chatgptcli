@@ -36,6 +36,11 @@ export function resolveOpenCliPaths() {
   return { root, mainPath, extensionPath, browserIndexPath };
 }
 
+/** POSIX-safe single-quote for embedding a path in a copyable shell hint. */
+export function shellSingleQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
 function ensureOpenCliReady() {
   const { root, mainPath, browserIndexPath } = resolveOpenCliPaths();
 
@@ -51,8 +56,9 @@ function ensureOpenCliReady() {
 
   // Never auto-run package install from ask/doctor hot paths — lifecycle scripts
   // would execute with no confirmation (including under a poisoned ROOT env).
+  // Hint path is single-quoted so metacharacters / embedded quotes cannot inject.
   throw new AppError(ERROR_CODE.CONFIG_INVALID, `opencli build artifacts missing under ${root}`, {
-    hint: `Run \`cd "${root}" && bun install\` once, or \`chatgptcli setup\` for guidance. ask/doctor never auto-install opencli.`
+    hint: `Run \`cd ${shellSingleQuote(root)} && bun install\` once, or \`chatgptcli setup\` for guidance. ask/doctor never auto-install opencli.`
   });
 }
 
