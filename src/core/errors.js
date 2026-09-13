@@ -29,6 +29,25 @@ export class AppError extends Error {
   }
 }
 
+const NETWORK_TYPE_ERROR_PATTERNS = [
+  /failed to fetch/i,
+  /fetch failed/i,
+  /network request failed/i,
+  /networkerror/i,
+  /econnrefused/i,
+  /enotfound/i,
+  /etimedout/i,
+  /econnreset/i,
+  /socket hang up/i,
+  /getaddrinfo/i
+];
+
+export function isNetworkTypeError(err) {
+  if (!(err instanceof TypeError)) return false;
+  const message = err.message || '';
+  return NETWORK_TYPE_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
+
 export function toAppError(err) {
   if (err instanceof AppError) return err;
 
@@ -39,9 +58,13 @@ export function toAppError(err) {
   }
 
   if (err instanceof TypeError) {
-    return new AppError(ERROR_CODE.NETWORK_ERROR, err.message || 'Network error', {
-      hint: 'Check local browser bridge connectivity and your network.'
-    });
+    if (isNetworkTypeError(err)) {
+      return new AppError(ERROR_CODE.NETWORK_ERROR, err.message || 'Network error', {
+        hint: 'Check local browser bridge connectivity and your network.'
+      });
+    }
+
+    return new AppError(ERROR_CODE.UNKNOWN, err.message || 'Unknown error');
   }
 
   const message = err instanceof Error ? err.message : String(err);

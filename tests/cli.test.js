@@ -133,6 +133,39 @@ describe('cli', () => {
     expect(code).toBe(2);
     expect(stderr.join('')).toContain('Unsupported format');
   });
+
+  test('programming TypeError maps to UNKNOWN with exit 1', async () => {
+    __setAskDepsForTest({
+      browserAskRunner: async () => {
+        const obj = null;
+        return obj.missing;
+      },
+      sleep: async () => {}
+    });
+
+    const stderr = captureStderr();
+    const code = await runCli(['ask', 'hello', '-f', 'json']);
+
+    expect(code).toBe(1);
+    expect(stderr.join('')).toContain('UNKNOWN:');
+    expect(stderr.join('')).not.toContain('browser bridge connectivity');
+  });
+
+  test('network-like TypeError maps to NETWORK_ERROR with exit 4', async () => {
+    __setAskDepsForTest({
+      browserAskRunner: async () => {
+        throw new TypeError('Failed to fetch');
+      },
+      sleep: async () => {}
+    });
+
+    const stderr = captureStderr();
+    const code = await runCli(['ask', 'hello', '-f', 'json']);
+
+    expect(code).toBe(4);
+    expect(stderr.join('')).toContain('NETWORK_ERROR:');
+    expect(stderr.join('')).toContain('browser bridge connectivity');
+  });
 });
 
 describe('ask helpers', () => {
