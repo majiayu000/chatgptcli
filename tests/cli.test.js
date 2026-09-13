@@ -3,6 +3,7 @@ import { runCli } from '../src/cli.js';
 import { __resetAskDepsForTest, __setAskDepsForTest, __test__ as askHelpers } from '../src/commands/ask.js';
 import { __resetExecRunnerForTest, __setExecRunnerForTest } from '../src/core/opencli.js';
 import { __resetSetupDepsForTest, __setSetupDepsForTest } from '../src/commands/setup.js';
+import { AppError, ERROR_CODE } from '../src/core/errors.js';
 
 const originalStdoutWrite = process.stdout.write.bind(process.stdout);
 const originalStderrWrite = process.stderr.write.bind(process.stderr);
@@ -126,6 +127,61 @@ describe('cli', () => {
     expect(stderr.join('')).toContain('INPUT_INVALID');
   });
 
+  test('login surface exits with AUTH (3) and AUTH_MISSING', async () => {
+    let calls = 0;
+    __setAskDepsForTest({
+      browserAskRunner: async () => {
+        calls += 1;
+        throw new AppError(ERROR_CODE.AUTH_MISSING, 'ChatGPT page is not in a logged-in ready state.');
+      },
+      sleep: async () => {}
+    });
+
+    const stderr = captureStderr();
+    const code = await runCli(['ask', 'hello', '--max-attempts', '3', '--retry-delay-ms', '0']);
+
+    expect(code).toBe(3);
+    expect(calls).toBe(1);
+    expect(stderr.join('')).toContain('AUTH_MISSING');
+  });
+
+  test('challenge surface exits with AUTH (3) and AUTH_INVALID', async () => {
+    let calls = 0;
+    __setAskDepsForTest({
+      browserAskRunner: async () => {
+        calls += 1;
+        throw new AppError(ERROR_CODE.AUTH_INVALID, 'ChatGPT page is blocked by a verification or access challenge.');
+      },
+      sleep: async () => {}
+    });
+
+    const stderr = captureStderr();
+    const code = await runCli(['ask', 'hello', '--max-attempts', '3', '--retry-delay-ms', '0']);
+
+    expect(code).toBe(3);
+    expect(calls).toBe(1);
+    expect(stderr.join('')).toContain('AUTH_INVALID');
+  });
+
+  test('non-auth blocked editor still exits GENERIC (1) and retries', async () => {
+    const calls = [];
+    __setAskDepsForTest({
+      browserAskRunner: async (input) => {
+        calls.push(input);
+        return { response: '[BLOCKED] ChatGPT composer editor was not found.' };
+      },
+      sleep: async () => {}
+    });
+
+    const stdout = captureStdout();
+    const code = await runCli(['ask', 'hello', '--max-attempts', '2', '--retry-delay-ms', '0', '-f', 'json']);
+
+    expect(code).toBe(1);
+    expect(calls).toHaveLength(2);
+    expect(stdout.join('')).toContain('[BLOCKED]');
+    expect(stdout.join('')).toContain('"status": "retry"');
+  });
+
   test('invalid format returns exit 2', async () => {
     const stderr = captureStderr();
     const code = await runCli(['ask', 'hello', '-f', 'yaml']);
@@ -152,5 +208,23 @@ describe('ask helpers', () => {
     expect(askHelpers.summarizeSurfaceIssue(askHelpers.normalizeSurfaceState({ challengeLike: true }))).toContain('verification');
     expect(askHelpers.summarizeSurfaceIssue(askHelpers.normalizeSurfaceState({ loginLike: true }))).toContain('logged-in ready state');
     expect(askHelpers.summarizeSurfaceIssue(askHelpers.normalizeSurfaceState({ editorFound: false, sendFound: false }))).toContain('editor');
+  });
+
+  test('rejectAuthSurface throws AUTH_MISSING for login and AUTH_INVALID for challenge', () => {
+    try {
+      askHelpers.rejectAuthSurface(askHelpers.normalizeSurfaceState({ loginLike: true }));
+      throw new Error('expected AUTH_MISSING');
+    } catch (error) {
+      expect(error.code).toBe(ERROR_CODE.AUTH_MISSING);
+    }
+
+    try {
+      askHelpers.rejectAuthSurface(askHelpers.normalizeSurfaceState({ challengeLike: true, loginLike: true }));
+      throw new Error('expected AUTH_INVALID');
+    } catch (error) {
+      expect(error.code).toBe(ERROR_CODE.AUTH_INVALID);
+    }
+
+    expect(() => askHelpers.rejectAuthSurface(askHelpers.normalizeSurfaceState({ editorFound: false }))).not.toThrow();
   });
 });

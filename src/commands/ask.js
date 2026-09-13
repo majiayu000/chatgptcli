@@ -122,7 +122,8 @@ async function runBrowserAsk(input) {
 
 async function askOnPage(page, input) {
   let surface = await ensureReadySurface(page, input.newChat);
-  if (!surface.editorReady || surface.loginLike || surface.challengeLike) {
+  rejectAuthSurface(surface);
+  if (!surface.editorReady) {
     return blocked(summarizeSurfaceIssue(surface));
   }
 
@@ -143,9 +144,7 @@ async function askOnPage(page, input) {
   }
 
   surface = await probeChatGptSurface(page);
-  if (surface.loginLike || surface.challengeLike) {
-    return blocked(summarizeSurfaceIssue(surface));
-  }
+  rejectAuthSurface(surface);
 
   return result;
 }
@@ -276,7 +275,7 @@ async function waitForAssistantResponse(page, input) {
     }
 
     if (probe.loginLike || probe.challengeLike) {
-      return blocked('ChatGPT page fell back to a login or verification gate while waiting for the response.');
+      rejectAuthSurface(probe);
     }
   }
 
@@ -316,6 +315,20 @@ async function isOnChatGpt(page) {
 
 function blocked(message) {
   return { response: `${BLOCKED_PREFIX} ${message}` };
+}
+
+function rejectAuthSurface(surface) {
+  if (surface.challengeLike) {
+    throw new AppError(ERROR_CODE.AUTH_INVALID, summarizeSurfaceIssue(surface), {
+      hint: 'Complete the ChatGPT verification challenge in the browser profile, then retry.'
+    });
+  }
+
+  if (surface.loginLike) {
+    throw new AppError(ERROR_CODE.AUTH_MISSING, summarizeSurfaceIssue(surface), {
+      hint: 'Log into chatgpt.com in the browser profile used by the bridge, then retry.'
+    });
+  }
 }
 
 function normalizeResponse(value) {
@@ -392,6 +405,7 @@ export const __test__ = {
   pickLatestAssistantCandidate,
   normalizeSurfaceState,
   summarizeSurfaceIssue,
+  rejectAuthSurface,
   isSuccessfulResponse,
   shouldRetry
 };
