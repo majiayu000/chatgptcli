@@ -39,7 +39,7 @@ export function runSetup() {
     formatCheck(browserExists, `opencli browser bridge module: ${browserIndexPath}`),
     formatCheck(extensionExists, `Browser Bridge extension dir: ${extensionPath}`),
     '',
-    `Path source: ${OPENCLI_ENV.ROOT}/${OPENCLI_ENV.MAIN} env override or built-in default.`,
+    `Path source: ${OPENCLI_ENV.ROOT} overrides the opencli checkout; ${OPENCLI_ENV.MAIN} overrides both the built entry and the sibling browser bridge module (otherwise built-in defaults under ROOT).`,
     ''
   ];
 

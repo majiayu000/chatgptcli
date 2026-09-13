@@ -51,7 +51,7 @@ This validates:
 - `chatgptcli setup` is a local preflight checker and does not change the browser-backed execution model.
 - By default, `chatgptcli` looks for `opencli` in `.omx/reference/opencli`.
 - If your `opencli` lives somewhere else, set `CHATGPTCLI_OPENCLI_ROOT=/path/to/opencli`.
-- If you want to point directly at a built entry file, set `CHATGPTCLI_OPENCLI_MAIN=/path/to/opencli/dist/src/main.js`.
+- If you want to point directly at a built entry file, set `CHATGPTCLI_OPENCLI_MAIN=/path/to/opencli/dist/src/main.js`. That override applies to both the CLI entry (`doctor`) and the sibling browser bridge module at `dist/src/browser/index.js` (`ask`).
 
 ## Examples
 

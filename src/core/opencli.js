@@ -30,9 +30,14 @@ export function __resetExecRunnerForTest() {
 
 export function resolveOpenCliPaths() {
   const root = process.env[OPENCLI_ENV.ROOT] || defaultOpenCliRoot();
-  const mainPath = process.env[OPENCLI_ENV.MAIN] || defaultMainPath(root);
+  const mainOverride = process.env[OPENCLI_ENV.MAIN];
+  const mainPath = mainOverride || defaultMainPath(root);
   const extensionPath = resolve(root, 'extension');
-  const browserIndexPath = resolve(root, 'dist', 'src', 'browser', 'index.js');
+  // When MAIN points at dist/src/main.js, derive the bridge as the sibling
+  // browser/index.js so ask and doctor share the same override tree.
+  const browserIndexPath = mainOverride
+    ? resolve(dirname(mainPath), 'browser', 'index.js')
+    : resolve(root, 'dist', 'src', 'browser', 'index.js');
   return { root, mainPath, extensionPath, browserIndexPath };
 }
 

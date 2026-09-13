@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
 import { runCli } from '../src/cli.js';
 import { __resetAskDepsForTest, __setAskDepsForTest, __test__ as askHelpers } from '../src/commands/ask.js';
-import { __resetExecRunnerForTest, __setExecRunnerForTest } from '../src/core/opencli.js';
+import { OPENCLI_ENV, resolveOpenCliPaths, __resetExecRunnerForTest, __setExecRunnerForTest } from '../src/core/opencli.js';
 import { __resetSetupDepsForTest, __setSetupDepsForTest } from '../src/commands/setup.js';
 
 const originalStdoutWrite = process.stdout.write.bind(process.stdout);
 const originalStderrWrite = process.stderr.write.bind(process.stderr);
+const previousRoot = process.env[OPENCLI_ENV.ROOT];
+const previousMain = process.env[OPENCLI_ENV.MAIN];
 
 beforeEach(() => {
   process.stdout.write = originalStdoutWrite;
@@ -21,6 +26,16 @@ afterEach(() => {
   __resetAskDepsForTest();
   __resetExecRunnerForTest();
   __resetSetupDepsForTest();
+  if (previousRoot === undefined) {
+    delete process.env[OPENCLI_ENV.ROOT];
+  } else {
+    process.env[OPENCLI_ENV.ROOT] = previousRoot;
+  }
+  if (previousMain === undefined) {
+    delete process.env[OPENCLI_ENV.MAIN];
+  } else {
+    process.env[OPENCLI_ENV.MAIN] = previousMain;
+  }
 });
 
 function captureStdout() {
@@ -39,6 +54,17 @@ function captureStderr() {
     return true;
   };
   return chunks;
+}
+
+function createFakeOpenCliDist() {
+  const root = mkdtempSync(resolve(tmpdir(), 'chatgptcli-opencli-'));
+  const distSrc = resolve(root, 'dist', 'src');
+  const browserDir = resolve(distSrc, 'browser');
+  mkdirSync(browserDir, { recursive: true });
+  const mainPath = resolve(distSrc, 'main.js');
+  writeFileSync(mainPath, '');
+  writeFileSync(resolve(browserDir, 'index.js'), '');
+  return { root, mainPath };
 }
 
 describe('cli', () => {
@@ -83,17 +109,25 @@ describe('cli', () => {
   });
 
   test('doctor forwards to opencli doctor', async () => {
-    const calls = [];
-    __setExecRunnerForTest((cmd, args) => {
-      calls.push({ cmd, args });
-      return { status: 0 };
-    });
+    const fake = createFakeOpenCliDist();
+    process.env[OPENCLI_ENV.MAIN] = fake.mainPath;
 
-    const code = await runCli(['doctor', '--sessions', '--no-live']);
+    try {
+      const calls = [];
+      __setExecRunnerForTest((cmd, args) => {
+        calls.push({ cmd, args });
+        return { status: 0 };
+      });
 
-    expect(code).toBe(0);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].args.slice(-3)).toEqual(['doctor', '--sessions', '--no-live']);
+      const code = await runCli(['doctor', '--sessions', '--no-live']);
+
+      expect(code).toBe(0);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].args.slice(-3)).toEqual(['doctor', '--sessions', '--no-live']);
+      expect(calls[0].args[0]).toBe(fake.mainPath);
+    } finally {
+      rmSync(fake.root, { recursive: true, force: true });
+    }
   });
 
   test('setup checks prerequisites and prints guidance', async () => {
@@ -108,6 +142,7 @@ describe('cli', () => {
     expect(code).toBe(0);
     expect(stdout.join('')).toContain('[OK] Bun available (1.3.5)');
     expect(stdout.join('')).toContain('scripts/launch-chatgpt-browser.sh');
+    expect(stdout.join('')).toContain(`${OPENCLI_ENV.MAIN} overrides both the built entry and the sibling browser bridge module`);
   });
 
   test('setup rejects unknown options', async () => {
@@ -132,6 +167,28 @@ describe('cli', () => {
 
     expect(code).toBe(2);
     expect(stderr.join('')).toContain('Unsupported format');
+  });
+});
+
+describe('resolveOpenCliPaths', () => {
+  test('keeps browserIndexPath under ROOT when MAIN is unset', () => {
+    delete process.env[OPENCLI_ENV.MAIN];
+    process.env[OPENCLI_ENV.ROOT] = '/tmp/opencli-root';
+
+    const paths = resolveOpenCliPaths();
+
+    expect(paths.mainPath).toBe(resolve('/tmp/opencli-root', 'dist', 'src', 'main.js'));
+    expect(paths.browserIndexPath).toBe(resolve('/tmp/opencli-root', 'dist', 'src', 'browser', 'index.js'));
+  });
+
+  test('derives browserIndexPath as sibling of MAIN when MAIN is set', () => {
+    process.env[OPENCLI_ENV.ROOT] = '/tmp/ignored-root';
+    process.env[OPENCLI_ENV.MAIN] = '/custom/dist/src/main.js';
+
+    const paths = resolveOpenCliPaths();
+
+    expect(paths.mainPath).toBe('/custom/dist/src/main.js');
+    expect(paths.browserIndexPath).toBe(resolve('/custom/dist/src', 'browser', 'index.js'));
   });
 });
 
