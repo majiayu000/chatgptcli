@@ -52,6 +52,7 @@ This validates:
 - By default, `chatgptcli` looks for `opencli` in `.omx/reference/opencli`.
 - If your `opencli` lives somewhere else, set `CHATGPTCLI_OPENCLI_ROOT=/path/to/opencli`.
 - If you want to point directly at a built entry file, set `CHATGPTCLI_OPENCLI_MAIN=/path/to/opencli/dist/src/main.js`.
+- `ask` and `doctor` never run `bun install` (or other package lifecycle scripts). If opencli build artifacts are missing, bootstrap explicitly with `cd <opencli-root> && bun install`, or run `chatgptcli setup` for guidance.
 
 ## Examples
 

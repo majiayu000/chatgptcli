@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { runCli } from '../src/cli.js';
 import { __resetAskDepsForTest, __setAskDepsForTest, __test__ as askHelpers } from '../src/commands/ask.js';
-import { __resetExecRunnerForTest, __setExecRunnerForTest } from '../src/core/opencli.js';
+import { __resetExecRunnerForTest, __setExecRunnerForTest, OPENCLI_ENV } from '../src/core/opencli.js';
 import { __resetSetupDepsForTest, __setSetupDepsForTest } from '../src/commands/setup.js';
 
 const originalStdoutWrite = process.stdout.write.bind(process.stdout);
 const originalStderrWrite = process.stderr.write.bind(process.stderr);
+const originalOpenCliRoot = process.env[OPENCLI_ENV.ROOT];
+const originalOpenCliMain = process.env[OPENCLI_ENV.MAIN];
 
 beforeEach(() => {
   process.stdout.write = originalStdoutWrite;
@@ -21,6 +26,16 @@ afterEach(() => {
   __resetAskDepsForTest();
   __resetExecRunnerForTest();
   __resetSetupDepsForTest();
+  if (originalOpenCliRoot === undefined) {
+    delete process.env[OPENCLI_ENV.ROOT];
+  } else {
+    process.env[OPENCLI_ENV.ROOT] = originalOpenCliRoot;
+  }
+  if (originalOpenCliMain === undefined) {
+    delete process.env[OPENCLI_ENV.MAIN];
+  } else {
+    process.env[OPENCLI_ENV.MAIN] = originalOpenCliMain;
+  }
 });
 
 function captureStdout() {
@@ -39,6 +54,18 @@ function captureStderr() {
     return true;
   };
   return chunks;
+}
+
+function makeOpenCliFixture({ withArtifacts = true } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'chatgptcli-opencli-'));
+  if (withArtifacts) {
+    const distSrc = join(root, 'dist', 'src');
+    const browserDir = join(distSrc, 'browser');
+    mkdirSync(browserDir, { recursive: true });
+    writeFileSync(join(distSrc, 'main.js'), 'export {};\n');
+    writeFileSync(join(browserDir, 'index.js'), 'export class BrowserBridge {}\n');
+  }
+  return root;
 }
 
 describe('cli', () => {
@@ -83,17 +110,50 @@ describe('cli', () => {
   });
 
   test('doctor forwards to opencli doctor', async () => {
+    const root = makeOpenCliFixture({ withArtifacts: true });
+    process.env[OPENCLI_ENV.ROOT] = root;
+
     const calls = [];
     __setExecRunnerForTest((cmd, args) => {
       calls.push({ cmd, args });
       return { status: 0 };
     });
 
-    const code = await runCli(['doctor', '--sessions', '--no-live']);
+    try {
+      const code = await runCli(['doctor', '--sessions', '--no-live']);
 
-    expect(code).toBe(0);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].args.slice(-3)).toEqual(['doctor', '--sessions', '--no-live']);
+      expect(code).toBe(0);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].args.slice(-3)).toEqual(['doctor', '--sessions', '--no-live']);
+      expect(calls[0].args).not.toContain('install');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('doctor fails with setup hint when opencli artifacts are missing (never auto-installs)', async () => {
+    const root = makeOpenCliFixture({ withArtifacts: false });
+    process.env[OPENCLI_ENV.ROOT] = root;
+
+    const calls = [];
+    __setExecRunnerForTest((cmd, args) => {
+      calls.push({ cmd, args });
+      return { status: 0 };
+    });
+
+    const stderr = captureStderr();
+    try {
+      const code = await runCli(['doctor']);
+
+      expect(code).toBe(6);
+      expect(calls).toHaveLength(0);
+      expect(stderr.join('')).toContain('CONFIG_INVALID');
+      expect(stderr.join('')).toContain('build artifacts missing');
+      expect(stderr.join('')).toContain('bun install');
+      expect(stderr.join('')).toContain('never auto-install');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test('setup checks prerequisites and prints guidance', async () => {

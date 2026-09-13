@@ -49,26 +49,11 @@ function ensureOpenCliReady() {
     });
   }
 
-  const install = execRunner(process.execPath, ['install'], {
-    cwd: root,
-    stdio: 'inherit',
-    env: { ...process.env }
+  // Never auto-run package install from ask/doctor hot paths — lifecycle scripts
+  // would execute with no confirmation (including under a poisoned ROOT env).
+  throw new AppError(ERROR_CODE.CONFIG_INVALID, `opencli build artifacts missing under ${root}`, {
+    hint: `Run \`cd "${root}" && bun install\` once, or \`chatgptcli setup\` for guidance. ask/doctor never auto-install opencli.`
   });
-
-  if (install.error) {
-    throw new AppError(ERROR_CODE.CONFIG_INVALID, 'Failed to bootstrap opencli.', {
-      hint: 'Run bun install inside your opencli checkout.',
-      details: install.error.message
-    });
-  }
-
-  if (install.status !== 0 || !existsSync(mainPath) || !existsSync(browserIndexPath)) {
-    throw new AppError(ERROR_CODE.CONFIG_INVALID, 'opencli bootstrap did not produce a runnable browser bridge.', {
-      hint: 'Check opencli/dist/src/main.js and opencli/dist/src/browser/index.js.'
-    });
-  }
-
-  return { root, mainPath, browserIndexPath };
 }
 
 export function runOpenCli(args) {
