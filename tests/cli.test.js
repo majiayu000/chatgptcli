@@ -227,4 +227,33 @@ describe('ask helpers', () => {
 
     expect(() => askHelpers.rejectAuthSurface(askHelpers.normalizeSurfaceState({ editorFound: false }))).not.toThrow();
   });
+
+  test('AUTH classification requires gate URL or control, not conversational body text', () => {
+    // Conversational "How do I log in?" must not become AUTH just because the words appear.
+    expect(askHelpers.classifyAuthGateSignals({
+      authUrl: false,
+      loginGate: false,
+      challengeUrl: false,
+      challengeGate: false
+    })).toEqual({ loginLike: false, challengeLike: false });
+
+    expect(askHelpers.classifyAuthGateSignals({ authUrl: true })).toEqual({
+      loginLike: true,
+      challengeLike: false
+    });
+    expect(askHelpers.classifyAuthGateSignals({ loginGate: true })).toEqual({
+      loginLike: true,
+      challengeLike: false
+    });
+    expect(askHelpers.classifyAuthGateSignals({ challengeGate: true })).toEqual({
+      loginLike: false,
+      challengeLike: true
+    });
+
+    const probeSource = askHelpers.AUTH_GATE_PROBE_SOURCE;
+    expect(probeSource).not.toContain('document.body');
+    expect(probeSource).not.toContain('innerText || \'\').trim().slice(0, 4000)');
+    expect(probeSource).toContain('data-message-author-role');
+    expect(probeSource).toContain('login-button');
+  });
 });

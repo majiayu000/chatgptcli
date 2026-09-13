@@ -28,6 +28,82 @@ const CHALLENGE_HINTS = [
   '人机验证'
 ];
 
+// Browser-side probe: classify AUTH via URL / gate controls, never body-wide chat text.
+const AUTH_GATE_PROBE_SOURCE = `(() => {
+  const LOGIN_HINTS = ${JSON.stringify(LOGIN_HINTS)};
+  const CHALLENGE_HINTS = ${JSON.stringify(CHALLENGE_HINTS)};
+  const href = String(location.href || '').toLowerCase();
+  const pathname = String(location.pathname || '').toLowerCase();
+
+  const authUrl = /\\/(auth|log-?in|sign-?in)(\\/|$|\\?|#)/.test(href)
+    || href.includes('accounts.google.com')
+    || href.includes('auth.openai.com')
+    || href.includes('auth0.com');
+  const challengeUrl = pathname.includes('/challenge')
+    || href.includes('cf-browser-verification')
+    || href.includes('cdn-cgi/challenge');
+
+  const isConversationNode = (node) => Boolean(
+    node && node.closest
+      && node.closest('[data-message-author-role], .ProseMirror, [data-testid="conversation-turn"]')
+  );
+
+  const loginSelectors = [
+    '[data-testid="login-button"]',
+    '[data-testid="login"]',
+    'button[name="login"]',
+    'a[href*="/auth"]',
+    'a[href*="login"]',
+    'a[href*="signin"]'
+  ];
+  let loginGate = loginSelectors.some((selector) => {
+    const node = document.querySelector(selector);
+    return Boolean(node) && !isConversationNode(node);
+  });
+
+  if (!loginGate) {
+    for (const node of document.querySelectorAll('button, a[href], [role="button"]')) {
+      if (!(node instanceof HTMLElement) || isConversationNode(node)) continue;
+      const text = String(node.innerText || node.textContent || '').trim().toLowerCase();
+      if (!text || text.length > 48) continue;
+      if (LOGIN_HINTS.some((hint) => text === hint || text.startsWith(hint + ' '))) {
+        loginGate = true;
+        break;
+      }
+    }
+  }
+
+  const challengeSelectors = [
+    'iframe[src*="captcha"]',
+    'iframe[src*="challenge"]',
+    'iframe[title*="captcha" i]',
+    '#challenge-form',
+    '.cf-browser-verification',
+    '[data-testid*="challenge"]'
+  ];
+  let challengeGate = challengeSelectors.some((selector) => Boolean(document.querySelector(selector)));
+
+  if (!challengeGate) {
+    for (const node of document.querySelectorAll('[role="dialog"], [role="alertdialog"], main form')) {
+      if (!(node instanceof HTMLElement) || isConversationNode(node)) continue;
+      const text = String(node.innerText || '').toLowerCase().slice(0, 2000);
+      if (CHALLENGE_HINTS.some((hint) => text.includes(hint))) {
+        challengeGate = true;
+        break;
+      }
+    }
+  }
+
+  return {
+    authUrl,
+    challengeUrl,
+    loginGate,
+    challengeGate,
+    loginLike: Boolean(authUrl || loginGate),
+    challengeLike: Boolean(challengeUrl || challengeGate)
+  };
+})()`;
+
 let browserAskRunner = runBrowserAsk;
 let sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -257,12 +333,12 @@ async function waitForAssistantResponse(page, input) {
         .map((text) => (typeof text === 'string' ? text.trim() : ''))
         .filter(Boolean);
       const streaming = Boolean(document.querySelector(${JSON.stringify(STOP_SELECTOR)}));
-      const bodyText = (document.body?.innerText || '').trim().slice(0, 4000);
+      const auth = ${AUTH_GATE_PROBE_SOURCE};
       return {
         assistants,
         streaming,
-        loginLike: ${JSON.stringify(LOGIN_HINTS)}.some((hint) => bodyText.toLowerCase().includes(hint)),
-        challengeLike: ${JSON.stringify(CHALLENGE_HINTS)}.some((hint) => bodyText.toLowerCase().includes(hint))
+        loginLike: Boolean(auth.loginLike),
+        challengeLike: Boolean(auth.challengeLike)
       };
     })()`);
 
@@ -284,17 +360,16 @@ async function waitForAssistantResponse(page, input) {
 
 async function probeChatGptSurface(page) {
   const result = await page.evaluate(`(() => {
-    const bodyText = (document.body?.innerText || '').trim().slice(0, 4000);
-    const normalized = bodyText.toLowerCase();
     const editor = document.querySelector(${JSON.stringify(EDITOR_SELECTOR)});
     const send = document.querySelector(${JSON.stringify(SEND_SELECTOR)});
+    const auth = ${AUTH_GATE_PROBE_SOURCE};
     return {
       url: location.href,
       editorFound: editor instanceof HTMLElement,
       sendFound: send instanceof HTMLButtonElement,
       sendDisabled: send instanceof HTMLButtonElement ? send.disabled : false,
-      loginLike: ${JSON.stringify(LOGIN_HINTS)}.some((hint) => normalized.includes(hint)),
-      challengeLike: ${JSON.stringify(CHALLENGE_HINTS)}.some((hint) => normalized.includes(hint))
+      loginLike: Boolean(auth.loginLike),
+      challengeLike: Boolean(auth.challengeLike)
     };
   })()`);
 
@@ -348,16 +423,25 @@ function pickLatestAssistantCandidate(assistants, baselineCount, prompt) {
   return '';
 }
 
+function classifyAuthGateSignals(signals) {
+  const object = signals && typeof signals === 'object' ? signals : {};
+  return {
+    loginLike: Boolean(object.authUrl || object.loginGate || object.loginLike),
+    challengeLike: Boolean(object.challengeUrl || object.challengeGate || object.challengeLike)
+  };
+}
+
 function normalizeSurfaceState(value) {
   const object = value && typeof value === 'object' ? value : {};
+  const auth = classifyAuthGateSignals(object);
   return {
     url: typeof object.url === 'string' ? object.url : '',
     editorFound: Boolean(object.editorFound),
     sendFound: Boolean(object.sendFound),
     sendDisabled: Boolean(object.sendDisabled),
     editorReady: Boolean(object.editorFound) && Boolean(object.sendFound),
-    loginLike: Boolean(object.loginLike),
-    challengeLike: Boolean(object.challengeLike)
+    loginLike: auth.loginLike,
+    challengeLike: auth.challengeLike
   };
 }
 
@@ -403,9 +487,11 @@ function renderResult(result, format) {
 export const __test__ = {
   isOnChatGpt,
   pickLatestAssistantCandidate,
+  classifyAuthGateSignals,
   normalizeSurfaceState,
   summarizeSurfaceIssue,
   rejectAuthSurface,
   isSuccessfulResponse,
-  shouldRetry
+  shouldRetry,
+  AUTH_GATE_PROBE_SOURCE
 };
