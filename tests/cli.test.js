@@ -256,4 +256,19 @@ describe('ask helpers', () => {
     expect(probeSource).toContain('data-message-author-role');
     expect(probeSource).toContain('login-button');
   });
+
+  test('AUTH probe excludes sidebar/history login-text matches and covers static interstitials', () => {
+    const probeSource = askHelpers.AUTH_GATE_PROBE_SOURCE;
+    // Login-hint fallback must not scan bare document-wide anchors (sidebar false positives).
+    expect(probeSource).toContain('isNavOrHistoryNode');
+    expect(probeSource).toContain('a[href^="/c/"]');
+    expect(probeSource).toContain('loginTextRoots');
+    expect(probeSource).not.toContain("document.querySelectorAll('button, a[href], [role=\"button\"]')");
+    expect(probeSource).not.toContain('document.querySelectorAll(\'button, a[href], [role="button"]\')');
+    // Static access-denied pages outside dialog/main form need interstitial roots when chat chrome is absent.
+    expect(probeSource).toContain('hasChatChrome');
+    expect(probeSource).toContain('.cf-error-details');
+    expect(probeSource).toContain('[data-testid="error-message"]');
+    expect(probeSource).toContain("challengeRootSelector");
+  });
 });

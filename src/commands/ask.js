@@ -48,6 +48,25 @@ const AUTH_GATE_PROBE_SOURCE = `(() => {
       && node.closest('[data-message-author-role], .ProseMirror, [data-testid="conversation-turn"]')
   );
 
+  // Sidebar/history chrome: conversation titles like "Login help" must not count as login gates.
+  const isNavOrHistoryNode = (node) => Boolean(
+    node && node.closest && node.closest([
+      'nav',
+      'aside',
+      '[data-testid*="sidebar" i]',
+      '[data-testid*="history" i]',
+      '[data-testid="conversation-list"]',
+      '[aria-label*="Chat history" i]',
+      '[aria-label*="Sidebar" i]',
+      'a[href^="/c/"]',
+      'a[href*="/c/"]'
+    ].join(', '))
+  );
+
+  const hasChatChrome = Boolean(document.querySelector(
+    '.ProseMirror[role="textbox"], [data-message-author-role], [data-testid="conversation-turn"]'
+  ));
+
   const loginSelectors = [
     '[data-testid="login-button"]',
     '[data-testid="login"]',
@@ -58,12 +77,19 @@ const AUTH_GATE_PROBE_SOURCE = `(() => {
   ];
   let loginGate = loginSelectors.some((selector) => {
     const node = document.querySelector(selector);
-    return Boolean(node) && !isConversationNode(node);
+    return Boolean(node) && !isConversationNode(node) && !isNavOrHistoryNode(node);
   });
 
   if (!loginGate) {
-    for (const node of document.querySelectorAll('button, a[href], [role="button"]')) {
-      if (!(node instanceof HTMLElement) || isConversationNode(node)) continue;
+    // Only scan known login-gate containers — never sidebar/history anchors.
+    const loginTextRoots = document.querySelectorAll(
+      'main, [role="main"], [role="dialog"], [role="alertdialog"], form, header'
+    );
+    const loginCandidates = loginTextRoots.length
+      ? Array.from(loginTextRoots).flatMap((root) => Array.from(root.querySelectorAll('button, a[href], [role="button"]')))
+      : [];
+    for (const node of loginCandidates) {
+      if (!(node instanceof HTMLElement) || isConversationNode(node) || isNavOrHistoryNode(node)) continue;
       const text = String(node.innerText || node.textContent || '').trim().toLowerCase();
       if (!text || text.length > 48) continue;
       if (LOGIN_HINTS.some((hint) => text === hint || text.startsWith(hint + ' '))) {
@@ -79,12 +105,20 @@ const AUTH_GATE_PROBE_SOURCE = `(() => {
     'iframe[title*="captcha" i]',
     '#challenge-form',
     '.cf-browser-verification',
-    '[data-testid*="challenge"]'
+    '.cf-error-details',
+    '#cf-error-details',
+    '[data-testid*="challenge"]',
+    '[data-testid="error-message"]'
   ];
   let challengeGate = challengeSelectors.some((selector) => Boolean(document.querySelector(selector)));
 
   if (!challengeGate) {
-    for (const node of document.querySelectorAll('[role="dialog"], [role="alertdialog"], main form')) {
+    // Dialogs/forms always; static interstitial containers only when chat chrome is absent
+    // so conversational "access denied" text cannot false-trigger AUTH_INVALID.
+    const challengeRootSelector = hasChatChrome
+      ? '[role="dialog"], [role="alertdialog"], main form'
+      : '[role="dialog"], [role="alertdialog"], main form, main, [role="main"], .cf-error-details, #cf-error-details, [data-testid="error-message"]';
+    for (const node of document.querySelectorAll(challengeRootSelector)) {
       if (!(node instanceof HTMLElement) || isConversationNode(node)) continue;
       const text = String(node.innerText || '').toLowerCase().slice(0, 2000);
       if (CHALLENGE_HINTS.some((hint) => text.includes(hint))) {
