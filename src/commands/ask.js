@@ -34,11 +34,17 @@ const AUTH_GATE_PROBE_SOURCE = `(() => {
   const CHALLENGE_HINTS = ${JSON.stringify(CHALLENGE_HINTS)};
   const href = String(location.href || '').toLowerCase();
   const pathname = String(location.pathname || '').toLowerCase();
+  const logoutUrl = /\\/(log-?out|sign-?out)(\\/|$|\\?|#)/.test(href)
+    || href.includes('logout')
+    || href.includes('signout')
+    || href.includes('sign-out');
 
-  const authUrl = /\\/(auth|log-?in|sign-?in)(\\/|$|\\?|#)/.test(href)
+  const authUrl = !logoutUrl && (
+    /\\/(auth|log-?in|sign-?in)(\\/|$|\\?|#)/.test(href)
     || href.includes('accounts.google.com')
     || href.includes('auth.openai.com')
-    || href.includes('auth0.com');
+    || href.includes('auth0.com')
+  );
   const challengeUrl = pathname.includes('/challenge')
     || href.includes('cf-browser-verification')
     || href.includes('cdn-cgi/challenge');
@@ -48,19 +54,48 @@ const AUTH_GATE_PROBE_SOURCE = `(() => {
       && node.closest('[data-message-author-role], .ProseMirror, [data-testid="conversation-turn"]')
   );
 
-  // Sidebar/history chrome: conversation titles like "Login help" must not count as login gates.
+  // Sidebar/history chrome only — top-level homepage <nav>/<aside> login CTAs must still count.
   const isNavOrHistoryNode = (node) => Boolean(
     node && node.closest && node.closest([
-      'nav',
-      'aside',
       '[data-testid*="sidebar" i]',
       '[data-testid*="history" i]',
       '[data-testid="conversation-list"]',
       '[aria-label*="Chat history" i]',
       '[aria-label*="Sidebar" i]',
       'a[href^="/c/"]',
-      'a[href*="/c/"]'
+      'a[href*="/c/"]',
+      'nav a[href^="/c/"]',
+      'aside a[href^="/c/"]'
     ].join(', '))
+  );
+
+  const isExplicitLoginControl = (node) => Boolean(
+    node && (
+      node.matches?.('[data-testid="login-button"], [data-testid="login"], button[name="login"]')
+      || /\\b(log\\s*in|sign\\s*in)\\b/i.test(String(node.getAttribute?.('aria-label') || ''))
+    )
+  );
+
+  const isLogoutOrSignoutHref = (href) => {
+    const value = String(href || '').toLowerCase();
+    return /\\/(log-?out|sign-?out)(\\/|$|\\?|#)/.test(value)
+      || value.includes('logout')
+      || value.includes('signout')
+      || value.includes('sign-out');
+  };
+
+  const isLoginAuthHref = (href) => {
+    const value = String(href || '').toLowerCase();
+    if (!value || isLogoutOrSignoutHref(value)) return false;
+    return /\\/(auth|log-?in|sign-?in)(\\/|$|\\?|#)/.test(value)
+      || value.includes('login')
+      || value.includes('signin')
+      || value.includes('sign-in');
+  };
+
+  const formContainsComposer = (node) => Boolean(
+    node && node.querySelector
+      && node.querySelector('.ProseMirror[role="textbox"], [data-testid="send-button"]')
   );
 
   const hasChatChrome = Boolean(document.querySelector(
@@ -77,19 +112,29 @@ const AUTH_GATE_PROBE_SOURCE = `(() => {
   ];
   let loginGate = loginSelectors.some((selector) => {
     const node = document.querySelector(selector);
-    return Boolean(node) && !isConversationNode(node) && !isNavOrHistoryNode(node);
+    if (!node || isConversationNode(node)) return false;
+    if (node instanceof HTMLAnchorElement && !isLoginAuthHref(node.getAttribute('href') || node.href || '')) {
+      return false;
+    }
+    // Explicit login controls in top-level nav still count; only skip sidebar/history chrome.
+    if (isNavOrHistoryNode(node) && !isExplicitLoginControl(node)) return false;
+    return true;
   });
 
   if (!loginGate) {
     // Only scan known login-gate containers — never sidebar/history anchors.
     const loginTextRoots = document.querySelectorAll(
-      'main, [role="main"], [role="dialog"], [role="alertdialog"], form, header'
+      'main, [role="main"], [role="dialog"], [role="alertdialog"], form, header, nav'
     );
     const loginCandidates = loginTextRoots.length
       ? Array.from(loginTextRoots).flatMap((root) => Array.from(root.querySelectorAll('button, a[href], [role="button"]')))
       : [];
     for (const node of loginCandidates) {
-      if (!(node instanceof HTMLElement) || isConversationNode(node) || isNavOrHistoryNode(node)) continue;
+      if (!(node instanceof HTMLElement) || isConversationNode(node)) continue;
+      if (isNavOrHistoryNode(node) && !isExplicitLoginControl(node)) continue;
+      if (node instanceof HTMLAnchorElement && isLogoutOrSignoutHref(node.getAttribute('href') || node.href || '')) {
+        continue;
+      }
       const text = String(node.innerText || node.textContent || '').trim().toLowerCase();
       if (!text || text.length > 48) continue;
       if (LOGIN_HINTS.some((hint) => text === hint || text.startsWith(hint + ' '))) {
@@ -99,6 +144,7 @@ const AUTH_GATE_PROBE_SOURCE = `(() => {
     }
   }
 
+  // Proven challenge widgets only — generic error-message is hint-checked below.
   const challengeSelectors = [
     'iframe[src*="captcha"]',
     'iframe[src*="challenge"]',
@@ -107,18 +153,31 @@ const AUTH_GATE_PROBE_SOURCE = `(() => {
     '.cf-browser-verification',
     '.cf-error-details',
     '#cf-error-details',
-    '[data-testid*="challenge"]',
-    '[data-testid="error-message"]'
+    '[data-testid*="challenge"]'
   ];
   let challengeGate = challengeSelectors.some((selector) => Boolean(document.querySelector(selector)));
 
   if (!challengeGate) {
-    // Dialogs/forms always; static interstitial containers only when chat chrome is absent
-    // so conversational "access denied" text cannot false-trigger AUTH_INVALID.
+    // Dialogs always; skip composer forms that hold the editor; static interstitial
+    // containers only when chat chrome is absent so conversational "access denied"
+    // cannot false-trigger AUTH_INVALID. Generic error-message is a hint root only.
     const challengeRootSelector = hasChatChrome
       ? '[role="dialog"], [role="alertdialog"], main form'
       : '[role="dialog"], [role="alertdialog"], main form, main, [role="main"], .cf-error-details, #cf-error-details, [data-testid="error-message"]';
     for (const node of document.querySelectorAll(challengeRootSelector)) {
+      if (!(node instanceof HTMLElement) || isConversationNode(node)) continue;
+      if (formContainsComposer(node)) continue;
+      const text = String(node.innerText || '').toLowerCase().slice(0, 2000);
+      if (CHALLENGE_HINTS.some((hint) => text.includes(hint))) {
+        challengeGate = true;
+        break;
+      }
+    }
+  }
+
+  // Authenticated app errors: only treat as challenge when hint text is present.
+  if (!challengeGate && hasChatChrome) {
+    for (const node of document.querySelectorAll('[data-testid="error-message"]')) {
       if (!(node instanceof HTMLElement) || isConversationNode(node)) continue;
       const text = String(node.innerText || '').toLowerCase().slice(0, 2000);
       if (CHALLENGE_HINTS.some((hint) => text.includes(hint))) {

@@ -271,4 +271,22 @@ describe('ask helpers', () => {
     expect(probeSource).toContain('[data-testid="error-message"]');
     expect(probeSource).toContain("challengeRootSelector");
   });
+
+  test('AUTH probe avoids composer-form challenge FPs, bare error-message proof, nav CTA misses, and logout /auth matches', () => {
+    const probeSource = askHelpers.AUTH_GATE_PROBE_SOURCE;
+    // Composer main form with the editor must not be treated as a challenge root.
+    expect(probeSource).toContain('formContainsComposer');
+    expect(probeSource).toContain('.ProseMirror[role="textbox"], [data-testid="send-button"]');
+    // Generic error-message is a hint root, not automatic challenge proof.
+    expect(probeSource).toContain('Proven challenge widgets only');
+    expect(probeSource).not.toMatch(/challengeSelectors = \[[^\]]*error-message/s);
+    // Top-level nav login CTAs must still count; only sidebar/history is excluded.
+    expect(probeSource).toContain('isExplicitLoginControl');
+    expect(probeSource).toContain('top-level homepage <nav>/<aside> login CTAs must still count');
+    expect(probeSource).not.toMatch(/isNavOrHistoryNode = \(node\) => Boolean\(\s*node && node\.closest && node\.closest\(\[\s*'nav',\s*'aside'/);
+    // Logout/signout hrefs must not count as login gates via /auth.
+    expect(probeSource).toContain('isLogoutOrSignoutHref');
+    expect(probeSource).toContain('logoutUrl');
+    expect(probeSource).toContain('isLoginAuthHref');
+  });
 });
